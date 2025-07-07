@@ -464,7 +464,7 @@ def dashboard():
 💡 Deploy Flipper Zero Hit & Run payload to begin
 
 Server Status: ONLINE
-Time: {{ moment().format('YYYY-MM-DD HH:mm:ss') }}
+Time: {{ timestamp }}
 </div>
             <div style="text-align: center; margin-top: 10px;">
                 <button onclick="clearOutput()">🗑️ Clear Output</button>
@@ -742,7 +742,9 @@ Time: {{ moment().format('YYYY-MM-DD HH:mm:ss') }}
     </script>
 </body>
 </html>
-    ''')
+ return render_template_string('''
+    ''', timestamp=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
 
 # =============================================================================
 # API ENDPOINTS FOR DASHBOARD
