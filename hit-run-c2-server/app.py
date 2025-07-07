@@ -1,7 +1,6 @@
 # === requirements.txt ===
 flask==3.0.0
 gunicorn==21.2.0
-sqlite3==0.4.1
 
 # === railway.json ===
 {
