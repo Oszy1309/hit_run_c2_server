@@ -886,7 +886,7 @@ def deploy_instructions():
     """Show deployment instructions for Flipper Zero"""
     base_url = request.url_root.rstrip('/')
     
-    instructions = f'''
+    instructions = '''
 <!DOCTYPE html>
 <html>
 <head>
