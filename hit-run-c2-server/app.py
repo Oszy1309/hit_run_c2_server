@@ -1,17 +1,3 @@
-# === requirements.txt ===
-flask==3.0.0
-gunicorn==21.2.0
-
-# === railway.json ===
-{
-  "build": {
-    "builder": "NIXPACKS"
-  },
-  "deploy": {
-    "startCommand": "gunicorn app:app --bind 0.0.0.0:$PORT",
-    "healthcheckPath": "/test"
-  }
-}
 
 # === app.py ===
 #!/usr/bin/env python3
