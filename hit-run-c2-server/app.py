@@ -527,14 +527,19 @@ Time: {{ timestamp }}
             }
             
             let html = '';
-            sessions.forEach(session => {
-                const lastSeen = new Date((session.last_seen || "").replace(" ", "T"));
-                const isActive = (Date.now() - lastSeen.getTime()) < 300000; // 5 minutes
-                const statusClass = isActive ? 'status-online' : 'status-offline';
-                const status = isActive ? 'ONLINE' : 'OFFLINE';
-                const adminBadge = session.admin_status ? ' <span class="admin-badge">[ADMIN]</span>' : '';
-                
-                html += `
+           sessions.forEach((session) => {
+    const lastSeen = new Date((session.last_seen || "").replace(" ", "T"));
+    const isActive = (Date.now() - lastSeen.getTime()) < 300000;
+    const statusClass = isActive ? 'status-online' : 'status-offline';
+    const status = isActive ? 'ONLINE' : 'OFFLINE';
+    const adminBadge = session.admin_status ? '<span class="admin-badge">[ADMIN]</span>' : '';
+
+    console.log("Session:", session); // ✅ HIER reinschreiben
+    console.log("LastSeen:", lastSeen, "isActive:", isActive); // ✅
+
+    html += `...`; // deine HTML-Bausteine wie gehabt
+ });
+
                     <div class="session ${isActive ? 'active' : ''}" onclick="selectSession('${session.hostname}')">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <div>
