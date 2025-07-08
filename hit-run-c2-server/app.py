@@ -195,13 +195,15 @@ def dashboard():
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
-        body { 
+        css_styles = """
+            body { 
             background: linear-gradient(135deg, #0a0a0a, #1a1a2e, #16213e);
             color: #00ff41; 
             font-family: 'Courier New', monospace;
             min-height: 100vh;
             overflow-x: hidden;
         }
+        """
         
         .container { 
             max-width: 1400px; 
