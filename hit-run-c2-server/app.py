@@ -4,6 +4,7 @@ import json
 import datetime
 from threading import Lock
 from flask import Flask, request, jsonify, render_template_string
+from flask import render_template
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'railway-c2-secret-2024')
