@@ -528,7 +528,7 @@ Time: {{ timestamp }}
             
             let html = '';
             sessions.forEach(session => {
-                const lastSeen = new Date(session.last_seen);
+                const lastSeen = new Date((session.last_seen || "").replace(" ", "T"));
                 const isActive = (Date.now() - lastSeen.getTime()) < 300000; // 5 minutes
                 const statusClass = isActive ? 'status-online' : 'status-offline';
                 const status = isActive ? 'ONLINE' : 'OFFLINE';
